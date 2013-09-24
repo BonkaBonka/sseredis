@@ -25,7 +25,9 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 
 	pubsub, err := client.PubSubClient()
 	if err != nil {
-		http.Error(res, "Redis Unavailable: " + err.Error(), http.StatusInternalServerError)
+		msg := "Redis Unavailable: " + err.Error()
+		log.Print(msg)
+		http.Error(res, msg, http.StatusInternalServerError)
 		return
 	}
 	defer pubsub.Close()
@@ -35,7 +37,9 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 
 	channel, err := pubsub.Subscribe(queue)
 	if err != nil {
-		http.Error(res, "Subscribe Failed: " + err.Error(), http.StatusInternalServerError)
+		msg := "Subscribe Failed: " + err.Error()
+		log.Print(msg)
+		http.Error(res, msg, http.StatusInternalServerError)
 		return
 	}
 
@@ -47,14 +51,18 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	for {
 		msg := <- channel
 		if msg.Err != nil {
-			http.Error(res, "Message Receive Failed: " + msg.Err.Error(), http.StatusInternalServerError)
+			msg := "Message Receive Failed: " + msg.Err.Error()
+			log.Print(msg)
+			http.Error(res, msg, http.StatusInternalServerError)
 			return
 		}
 
 		if msg.Message != "" {
 			_, err := res.Write([]byte("data: " + msg.Message + "\n\n"))
 			if err != nil {
-				http.Error(res, "Message Transmit Failed: " + err.Error(), http.StatusInternalServerError)
+				msg := "Message Transmit Failed: " + err.Error()
+				log.Print(msg)
+				http.Error(res, msg, http.StatusInternalServerError)
 				return
 			}
 
@@ -69,7 +77,9 @@ func publisher(res http.ResponseWriter, req *http.Request) {
 
 	msg, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		http.Error(res, "Message Transmit Failed: " + err.Error(), http.StatusInternalServerError)
+		msg := "Message Transmit Failed: " + err.Error()
+		log.Print(msg)
+		http.Error(res, msg, http.StatusInternalServerError)
 		return
 	}
 
