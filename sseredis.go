@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io/ioutil"
 	"flag"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/vmihailenco/redis"
 )
+
+type Response map[string] interface {}
 
 var client *redis.Client
 
@@ -70,17 +73,17 @@ func publisher(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	client.Publish(queue, string(msg))
+	subscribers := client.Publish(queue, string(msg)).Val()
 
 	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
-	res.Header().Set("Connection", "keep-alive")
-	res.Header().Set("Content-Type", "text/event-stream")
 
-	_, err = res.Write([]byte("OK\n"))
-	if err != nil {
-		http.Error(res, "Message Transmit Failed: " + err.Error(), http.StatusInternalServerError)
-		return
+	if req.Header.Get("Accept") == "application/json" {
+		res.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(res).Encode(Response{"success": true, "subscribers": subscribers})
+	} else {
+		res.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(res, "OK - Subscribers: %d", subscribers)
 	}
 }
 
