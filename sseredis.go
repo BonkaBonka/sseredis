@@ -2,9 +2,9 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 
@@ -12,7 +12,7 @@ import (
 	"github.com/vmihailenco/redis"
 )
 
-type Response map[string] interface {}
+type Response map[string]interface{}
 
 var client *redis.Client
 
@@ -49,7 +49,7 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "text/event-stream")
 
 	for {
-		msg := <- channel
+		msg := <-channel
 		if msg.Err != nil {
 			msg := "Message Receive Failed: " + msg.Err.Error()
 			log.Print(msg)
@@ -98,12 +98,12 @@ func publisher(res http.ResponseWriter, req *http.Request) {
 }
 
 func main() {
-	var redisAddr  = flag.String("redis-addr",  "localhost:6379", "redis address")
-	var redisPass  = flag.String("redis-pass",  "",               "redis password")
-	var redisDb    = flag.Int   ("redis-db",    -1,               "redis database number")
-	var urlPrefix  = flag.String("url-prefix",  "redis",          "URL prefix")
+	var redisAddr = flag.String("redis-addr", "localhost:6379", "redis address")
+	var redisPass = flag.String("redis-pass", "", "redis password")
+	var redisDb = flag.Int("redis-db", -1, "redis database number")
+	var urlPrefix = flag.String("url-prefix", "redis", "URL prefix")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
-	var allowPosts = flag.Bool  ("allow-posts", false,            "allow POSTing to the queue")
+	var allowPosts = flag.Bool("allow-posts", false, "allow POSTing to the queue")
 
 	flag.Parse()
 
