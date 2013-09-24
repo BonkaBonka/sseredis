@@ -4,5 +4,5 @@ This is a simple (extremely naïve) Server-Sent Event to Redis PUB/SUB bridge.  
 
 ## BUGS!
 
-  * It appears to leak Redis connections - if a connection is interrupted by, say, a proxy server, the HTTP connection is properly torn down but not the subscription channel.  Boo.
+  * It's lazy about closing Redis connections after an HTTP connection drop.  In fact, it won't bother trying to close the connection until some sort of output buffer in the HTTP package fills and causes a write.  Boo.
   * POSTs have no size limit (aside from any that Redis enforces).  I doubt this is a feature.
