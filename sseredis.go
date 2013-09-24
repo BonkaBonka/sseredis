@@ -90,6 +90,7 @@ func main() {
 	var redisDb    = flag.Int   ("redis-db",    -1,               "redis database number")
 	var urlPrefix  = flag.String("url-prefix",  "redis",          "URL prefix")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
+	var allowPosts = flag.Bool  ("allow-posts", false,            "allow POSTing to the queue")
 
 	flag.Parse()
 
@@ -98,6 +99,7 @@ func main() {
 	log.Print("Redis Database : ", *redisDb)
 	log.Print("URL Prefix     : ", *urlPrefix)
 	log.Print("Listen Address : ", *listenAddr)
+	log.Print("Allow POSTs    : ", *allowPosts)
 
 	client = redis.NewTCPClient(*redisAddr, *redisPass, int64(*redisDb))
 	defer client.Close()
@@ -105,7 +107,9 @@ func main() {
 	router := mux.NewRouter()
 	subroute := router.PathPrefix(fmt.Sprintf("/%s/", *urlPrefix)).Subrouter()
 	subroute.HandleFunc("/{queue}", subscriber).Methods("GET")
-	subroute.HandleFunc("/{queue}", publisher).Methods("POST")
+	if *allowPosts {
+		subroute.HandleFunc("/{queue}", publisher).Methods("POST")
+	}
 
 	err := http.ListenAndServe(*listenAddr, router)
 	if err != nil {
