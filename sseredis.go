@@ -71,7 +71,6 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 			if err != nil {
 				msg := "Message Transmit Failed: " + err.Error()
 				log.Print(msg)
-				http.Error(res, msg, http.StatusInternalServerError)
 				return
 			}
 
