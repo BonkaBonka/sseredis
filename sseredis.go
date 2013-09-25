@@ -48,6 +48,15 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Connection", "keep-alive")
 	res.Header().Set("Content-Type", "text/event-stream")
 
+	_, err = res.Write([]byte(": --->" + strings.Repeat(" ", 2048) + "<--- padding\n\n"))
+	if err != nil {
+		msg := "Padding Transmit Failed: " + err.Error()
+		log.Print(msg)
+		return
+	}
+
+	flusher.Flush()
+
 	for {
 		msg := <-channel
 		if msg.Err != nil {
