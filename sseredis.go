@@ -7,6 +7,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/vmihailenco/redis"
@@ -58,24 +60,32 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	flusher.Flush()
 
 	for {
-		msg := <-channel
-		if msg.Err != nil {
-			msg := "Message Receive Failed: " + msg.Err.Error()
-			log.Print(msg)
-			http.Error(res, msg, http.StatusInternalServerError)
-			return
-		}
-
-		if msg.Message != "" {
-			_, err := res.Write([]byte("data: " + msg.Message + "\n\n"))
-			if err != nil {
-				msg := "Message Transmit Failed: " + err.Error()
+		timeout := time.After(30 * time.Second)
+		select {
+		case msg := <-channel:
+			if msg.Err != nil {
+				msg := "Message Receive Failed: " + msg.Err.Error()
 				log.Print(msg)
+				http.Error(res, msg, http.StatusInternalServerError)
 				return
 			}
 
-			flusher.Flush()
+			if msg.Message != "" {
+				_, err := res.Write([]byte("data: " + msg.Message + "\n\n"))
+				if err != nil {
+					msg := "Message Transmit Failed: " + err.Error()
+					log.Print(msg)
+					return
+				}
+			}
+		case <-timeout:
+			_, err := res.Write([]byte(": keep-alive\n\n"))
+			if err != nil {
+				return
+			}
 		}
+
+		flusher.Flush()
 	}
 }
 
