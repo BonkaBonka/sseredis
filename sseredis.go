@@ -17,6 +17,7 @@ import (
 type Response map[string]interface{}
 
 var client *redis.Client
+var keepAliveTime time.Duration
 
 func subscriber(res http.ResponseWriter, req *http.Request) {
 	flusher, ok := res.(http.Flusher)
@@ -60,7 +61,10 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	flusher.Flush()
 
 	for {
-		timeout := time.After(30 * time.Second)
+		var timeout <-chan time.Time
+		if keepAliveTime > 0 {
+			timeout = time.After(keepAliveTime * time.Second)
+		}
 		select {
 		case msg := <-channel:
 			if msg.Err != nil {
@@ -131,6 +135,7 @@ func main() {
 	var urlPrefix = flag.String("url-prefix", "redis", "URL prefix")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
 	var allowPosts = flag.Bool("allow-posts", false, "allow POSTing to the queue")
+	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable")
 
 	flag.Parse()
 
@@ -140,6 +145,9 @@ func main() {
 	log.Print("URL Prefix     : ", *urlPrefix)
 	log.Print("Listen Address : ", *listenAddr)
 	log.Print("Allow POSTs    : ", *allowPosts)
+	log.Print("Keep-Alive     : ", *keepAlive)
+
+	keepAliveTime = time.Duration(*keepAlive)
 
 	client = redis.NewTCPClient(*redisAddr, *redisPass, int64(*redisDb))
 	defer client.Close()
