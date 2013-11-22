@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ type Response map[string]interface{}
 
 var client *redis.Client
 var keepAliveTime time.Duration
+var clientRetryTime string
 
 func subscriber(res http.ResponseWriter, req *http.Request) {
 	flusher, ok := res.(http.Flusher)
@@ -56,6 +58,15 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		msg := "Padding Transmit Failed: " + err.Error()
 		log.Print(msg)
 		return
+	}
+
+	if clientRetryTime != "" {
+		_, err = res.Write([]byte("retry: " + clientRetryTime + "\n\n"))
+		if err != nil {
+			msg := "Retry-time Transmit Failed: " + err.Error()
+			log.Print(msg)
+			return
+		}
 	}
 
 	flusher.Flush()
@@ -136,6 +147,7 @@ func main() {
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
 	var allowPosts = flag.Bool("allow-posts", false, "allow POSTing to the queue")
 	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable")
+	var clientRetry = flag.Float64("client-retry", 0.0, "seconds for the client to wait before reconnecting (0 to use browser defaults)")
 
 	flag.Parse()
 
@@ -146,6 +158,11 @@ func main() {
 	log.Print("Listen Address : ", *listenAddr)
 	log.Print("Allow POSTs    : ", *allowPosts)
 	log.Print("Keep-Alive     : ", *keepAlive)
+
+	if *clientRetry > 0.0 {
+		log.Print("Client Retry   : ", *clientRetry)
+		clientRetryTime = strconv.Itoa(int(*clientRetry * 1000.0))
+	}
 
 	keepAliveTime = time.Duration(*keepAlive)
 
