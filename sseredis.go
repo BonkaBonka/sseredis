@@ -69,9 +69,9 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	flusher.Flush()
-
 	for {
+		flusher.Flush()
+
 		var timeout <-chan time.Time
 		if keepAliveTime > 0 {
 			timeout = time.After(keepAliveTime * time.Second)
@@ -108,8 +108,6 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 				return
 			}
 		}
-
-		flusher.Flush()
 	}
 }
 
