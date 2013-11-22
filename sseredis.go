@@ -86,6 +86,13 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 			}
 
 			if msg.Message != "" {
+				_, err = res.Write([]byte("event: " + msg.Channel + "\n"))
+				if err != nil {
+					msg := "Event Name Transmit Failed: " + err.Error()
+					log.Print(msg)
+					return
+				}
+
 				messages := strings.Split(msg.Message, "\n")
 				for index := range messages {
 					_, err := res.Write([]byte("data: " + messages[index] + "\n"))
