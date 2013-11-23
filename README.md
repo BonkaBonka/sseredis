@@ -1,6 +1,9 @@
 # SSE Redis
 
-This is a simple (extremely naïve) Server-Sent Event to Redis PUB/SUB bridge.  It's a mashup of code from [https://gist.github.com/artisonian/3836281](https://gist.github.com/artisonian/3836281) and [https://gist.github.com/tristanwietsma/5486625/](https://gist.github.com/tristanwietsma/5486625/) plus some small amount of my own legwork.
+This is a simple (extremely naïve) Server-Sent Event to Redis PUB/SUB bridge.  It's a mashup of code from:
+
+  * [https://gist.github.com/artisonian/3836281](https://gist.github.com/artisonian/3836281)
+  * [https://gist.github.com/tristanwietsma/5486625/](https://gist.github.com/tristanwietsma/5486625/)
 
 ## Sample
 
