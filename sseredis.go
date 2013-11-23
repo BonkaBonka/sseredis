@@ -51,7 +51,10 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
 	res.Header().Set("Connection", "keep-alive")
+	res.Header().Set("Transfer-Encoding", "chunked")
+	res.Header().Set("X-Accel-Buffering", "no")
 	res.Header().Set("Content-Type", "text/event-stream")
+	res.WriteHeader(200)
 
 	_, err = res.Write([]byte(": --->" + strings.Repeat(" ", 2048) + "<--- padding\n\n"))
 	if err != nil {
