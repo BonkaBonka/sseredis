@@ -5,7 +5,7 @@ This is a simple (extremely naïve) Server-Sent Event to Redis PUB/SUB bridge.  
   * [https://gist.github.com/artisonian/3836281](https://gist.github.com/artisonian/3836281)
   * [https://gist.github.com/tristanwietsma/5486625/](https://gist.github.com/tristanwietsma/5486625/)
 
-[![baby-gopher](https://raw2.github.com/drnic/babygopher-site/gh-pages/images/babygopher-badge.png)](http://www.babygopher.com)
+[![baby-gopher](https://raw2.github.com/drnic/babygopher-site/gh-pages/images/babygopher-badge.png)](http://www.babygopher.org)
 
 ## Sample
 
