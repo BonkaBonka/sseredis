@@ -7,7 +7,7 @@ This is a simple (extremely naïve) Server-Sent Event to Redis PUB/SUB bridge.  
 
 ## Sample
 
-	var es = EventSource('http://localhost:8080/redis/test');
+	var es = new EventSource('http://localhost:8080/redis/test');
 	es.addEventListener('test', function (event) {
 		console.log(event);
 	}, false);
