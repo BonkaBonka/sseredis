@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-redis/redis"
 	"github.com/gorilla/mux"
-	"github.com/vmihailenco/redis"
 )
 
 type Response map[string]interface{}
@@ -28,25 +28,13 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	pubsub, err := client.PubSubClient()
-	if err != nil {
-		msg := "Redis Unavailable: " + err.Error()
-		log.Print(msg)
-		http.Error(res, msg, http.StatusInternalServerError)
-		return
-	}
-	defer pubsub.Close()
-
 	vars := mux.Vars(req)
 	queue := vars["queue"]
 
-	channel, err := pubsub.Subscribe(queue)
-	if err != nil {
-		msg := "Subscribe Failed: " + err.Error()
-		log.Print(msg)
-		http.Error(res, msg, http.StatusInternalServerError)
-		return
-	}
+	pubsub := client.Subscribe(queue)
+	defer pubsub.Close()
+
+	channel := pubsub.Channel()
 
 	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
@@ -56,7 +44,7 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	res.Header().Set("Content-Type", "text/event-stream")
 	res.WriteHeader(http.StatusOK)
 
-	_, err = res.Write([]byte(": --->" + strings.Repeat(" ", 2048) + "<--- padding\n\n"))
+	_, err := res.Write([]byte(": --->" + strings.Repeat(" ", 2048) + "<--- padding\n\n"))
 	if err != nil {
 		msg := "Padding Transmit Failed: " + err.Error()
 		log.Print(msg)
@@ -81,14 +69,7 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		}
 		select {
 		case msg := <-channel:
-			if msg.Err != nil {
-				msg := "Message Receive Failed: " + msg.Err.Error()
-				log.Print(msg)
-				http.Error(res, msg, http.StatusInternalServerError)
-				return
-			}
-
-			if msg.Message != "" {
+			if msg.Payload != "" {
 				_, err = res.Write([]byte("event: " + msg.Channel + "\n"))
 				if err != nil {
 					msg := "Event Name Transmit Failed: " + err.Error()
@@ -96,7 +77,7 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 					return
 				}
 
-				messages := strings.Split(msg.Message, "\n")
+				messages := strings.Split(msg.Payload, "\n")
 				for index := range messages {
 					_, err := res.Write([]byte("data: " + messages[index] + "\n"))
 					if err != nil {
@@ -174,7 +155,11 @@ func main() {
 
 	keepAliveTime = time.Duration(*keepAlive)
 
-	client = redis.NewTCPClient(*redisAddr, *redisPass, int64(*redisDb))
+	client = redis.NewClient(&redis.Options{
+		Addr:     *redisAddr,
+		Password: *redisPass,
+		DB:       *redisDb,
+	})
 	defer client.Close()
 
 	router := mux.NewRouter()
