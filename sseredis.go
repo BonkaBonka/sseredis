@@ -20,7 +20,6 @@ type Response map[string]interface{}
 type universalHandler struct {
 	client          *redis.Client
 	prefix          string
-	allowPosts      bool
 	keepAliveTime   time.Duration
 	clientRetryTime string
 }
@@ -140,11 +139,7 @@ func (handler *universalHandler) ServeHTTP(res http.ResponseWriter, req *http.Re
 	case "GET":
 		handler.subscriber(res, req)
 	case "POST":
-		if handler.allowPosts {
-			handler.publisher(res, req)
-			break
-		}
-		fallthrough
+		handler.publisher(res, req)
 	default:
 		msg := fmt.Sprint("Invalid method: ", req.Method)
 		log.Print(msg)
@@ -158,7 +153,6 @@ func main() {
 	var redisDb = flag.Int("redis-db", -1, "redis database number")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
 	var urlPrefix = flag.String("url-prefix", "/redis", "URL prefix")
-	var allowPosts = flag.Bool("allow-posts", false, "allow POSTing to the queue")
 	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable")
 	var clientRetry = flag.Float64("client-retry", 0.0, "seconds for the client to wait before reconnecting (0 to use browser defaults)")
 
@@ -169,7 +163,6 @@ func main() {
 	log.Print("Redis Database : ", *redisDb)
 	log.Print("Listen Address : ", *listenAddr)
 	log.Print("URL Prefix     : ", *urlPrefix)
-	log.Print("Allow POSTs    : ", *allowPosts)
 	log.Print("Keep-Alive     : ", *keepAlive)
 
 	var clientRetryTime string
@@ -190,7 +183,6 @@ func main() {
 		Handler: &universalHandler{
 			client,
 			*urlPrefix,
-			*allowPosts,
 			time.Duration(*keepAlive),
 			clientRetryTime,
 		},
