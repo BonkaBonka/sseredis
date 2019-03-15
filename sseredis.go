@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -15,27 +14,209 @@ import (
 	"github.com/go-redis/redis"
 )
 
-type Response map[string]interface{}
-
 type universalHandler struct {
 	client          *redis.Client
-	prefix          string
+	pubsubPrefix    string
+	streamPrefix    string
 	keepAliveTime   time.Duration
 	clientRetryTime string
 }
 
+type message struct {
+	id     string
+	source string
+	text   string
+}
+
+type sender struct {
+	source string
+	send   func(req *http.Request) (string, error)
+}
+
+type receiver struct {
+	source   string
+	lastId   string
+	messages chan message
+	shutdown func() error
+}
+
+func NewPubSubReceiver(source string, client *redis.Client) *receiver {
+	receiver := &receiver{
+		source:   source,
+		messages: make(chan message),
+	}
+
+	go func() {
+		pubsub := client.Subscribe(source)
+		receiver.shutdown = pubsub.Close
+
+		channel := pubsub.Channel()
+		for {
+			evt := <-channel
+			if evt == nil {
+				break
+			}
+			if evt.Payload == "" {
+				continue
+			}
+
+			receiver.messages <- message{
+				source: evt.Channel,
+				text:   evt.Payload,
+			}
+		}
+
+		close(receiver.messages)
+	}()
+
+	return receiver
+}
+
+func NewPubSubSender(source string, client *redis.Client) *sender {
+	sender := &sender{
+		source: source,
+		send: func(req *http.Request) (string, error) {
+			message, err := ioutil.ReadAll(req.Body)
+			if err != nil {
+				return "", err
+			}
+
+			subscribers, err := client.Publish(source, string(message)).Result()
+			if err != nil {
+				return "", err
+			} else {
+				return strconv.FormatInt(subscribers, 10), nil
+			}
+		},
+	}
+
+	return sender
+}
+
+func NewStreamReceiver(source string, lastId string, client *redis.Client) *receiver {
+	if lastId == "" {
+		lastId = "0"
+	}
+
+	receiver := &receiver{
+		source:   source,
+		lastId:   lastId,
+		messages: make(chan message),
+	}
+
+	go func() {
+		for {
+			xrr, err := client.XRead(&redis.XReadArgs{
+				Block: 0,
+				Streams: []string{
+					receiver.source,
+					receiver.lastId,
+				},
+			}).Result()
+			if err != nil {
+				msg := "Stream Receive Failed: " + err.Error()
+				log.Print(msg)
+				break
+			}
+
+			for _, wad := range xrr {
+				for _, evt := range wad.Messages {
+					lines := make([]string, len(evt.Values))
+					i := 0
+					for key, val := range evt.Values {
+						lines[i] = fmt.Sprintf("%s=%s", key, val)
+						i++
+					}
+
+					receiver.messages <- message{
+						source: wad.Stream,
+						id:     evt.ID,
+						text:   strings.Join(lines, "\n"),
+					}
+
+					receiver.lastId = evt.ID
+				}
+			}
+		}
+
+		close(receiver.messages)
+	}()
+
+	return receiver
+}
+
+func NewStreamSender(source string, client *redis.Client) *sender {
+	sender := &sender{
+		source: source,
+		send: func(req *http.Request) (string, error) {
+			payload := &redis.XAddArgs{
+				Stream: source,
+				ID:     "*",
+			}
+
+			err := req.ParseForm()
+			if err != nil {
+				return "", err
+			}
+
+			if len(req.PostForm) < 1 {
+				return "", fmt.Errorf("no POST values")
+			}
+
+			payload.Values = make(map[string]interface{}, len(req.PostForm))
+			for key, vals := range req.PostForm {
+				// TODO: It might be useful to bark if a key doesn't have exactly one value
+				payload.Values[key] = vals[0]
+			}
+
+			xar, err := client.XAdd(payload).Result()
+			if err != nil {
+				return "", err
+			}
+
+			return xar, nil
+		},
+	}
+
+	return sender
+}
+
 func (handler *universalHandler) subscriber(res http.ResponseWriter, req *http.Request) {
+	prefix := path.Dir(req.URL.Path)
+	source := path.Base(req.URL.Path)
+
+	// https://www.w3.org/TR/2011/WD-eventsource-20110310/#last-event-id
+	lastId := req.Header.Get("Last-Event-ID")
+
+	var receiver *receiver
+
+	switch prefix {
+	case handler.pubsubPrefix:
+		receiver = NewPubSubReceiver(source, handler.client)
+	case handler.streamPrefix:
+		receiver = NewStreamReceiver(source, lastId, handler.client)
+	default:
+		msg := fmt.Sprint("unhandled path: ", prefix)
+		log.Print(msg)
+		http.Error(res, msg, http.StatusNotFound)
+		return
+	}
+
 	flusher, ok := res.(http.Flusher)
 	if !ok {
 		http.Error(res, "Streaming Unsupported", http.StatusInternalServerError)
 		return
 	}
 
-	queue := path.Base(req.URL.Path)
-	pubsub := handler.client.Subscribe(queue)
-	defer pubsub.Close()
-
-	channel := pubsub.Channel()
+	defer func() {
+		if receiver.shutdown != nil {
+			err := receiver.shutdown()
+			if err != nil {
+				msg := "messenger shutdown error: " + err.Error()
+				log.Print(msg)
+			}
+		}
+	}()
 
 	res.Header().Set("Cache-Control", "no-cache")
 	res.Header().Set("Connection", "keep-alive")
@@ -67,72 +248,98 @@ func (handler *universalHandler) subscriber(res http.ResponseWriter, req *http.R
 		if handler.keepAliveTime > 0 {
 			timeout = time.After(handler.keepAliveTime * time.Second)
 		}
+
 		select {
-		case msg := <-channel:
-			if msg.Payload != "" {
-				_, err = res.Write([]byte("event: " + msg.Channel + "\n"))
+		case msg := <-receiver.messages:
+			if msg.text == "" {
+				// Once a channel closes, default values get returned to look for empty text which cannot ordinarily
+				// happen
+				return
+			}
+
+			if msg.id != "" {
+				_, err = res.Write([]byte("id: " + msg.id + "\n"))
 				if err != nil {
-					msg := "Event Name Transmit Failed: " + err.Error()
+					msg := "Event ID Transmit Failed: " + err.Error()
 					log.Print(msg)
 					return
 				}
+			}
 
-				messages := strings.Split(msg.Payload, "\n")
-				for index := range messages {
-					_, err := res.Write([]byte("data: " + messages[index] + "\n"))
-					if err != nil {
-						msg := "Message Transmit Failed: " + err.Error()
-						log.Print(msg)
-						return
-					}
-				}
-				_, err := res.Write([]byte("\n"))
+			_, err = res.Write([]byte("event: " + msg.source + "\n"))
+			if err != nil {
+				msg := "Event Name Transmit Failed: " + err.Error()
+				log.Print(msg)
+				return
+			}
+
+			hunks := strings.Split(msg.text, "\n")
+			for index := range hunks {
+				_, err = res.Write([]byte("data: " + hunks[index] + "\n"))
 				if err != nil {
 					msg := "Message Transmit Failed: " + err.Error()
 					log.Print(msg)
 					return
 				}
 			}
+			_, err = res.Write([]byte("\n"))
+			if err != nil {
+				msg := "Message Transmit Failed: " + err.Error()
+				log.Print(msg)
+				return
+			}
 		case <-timeout:
 			_, err := res.Write([]byte(": keep-alive\n\n"))
 			if err != nil {
+				msg := "Keepalive Transmit Failed: " + err.Error()
+				log.Print(msg)
 				return
 			}
+		// https://stackoverflow.com/a/53966322
+		case <-req.Context().Done():
+			return
 		}
 	}
 }
 
 func (handler *universalHandler) publisher(res http.ResponseWriter, req *http.Request) {
-	msg, err := ioutil.ReadAll(req.Body)
+	prefix := path.Dir(req.URL.Path)
+	source := path.Base(req.URL.Path)
+
+	var sender *sender
+
+	switch prefix {
+	case handler.pubsubPrefix:
+		sender = NewPubSubSender(source, handler.client)
+	case handler.streamPrefix:
+		sender = NewStreamSender(source, handler.client)
+	default:
+		msg := fmt.Sprint("unhandled path: ", prefix)
+		log.Print(msg)
+		http.Error(res, msg, http.StatusNotFound)
+		return
+	}
+
+	result, err := sender.send(req)
 	if err != nil {
-		msg := "Message Transmit Failed: " + err.Error()
+		msg := fmt.Sprint("Error submitting message: ", err.Error())
 		log.Print(msg)
 		http.Error(res, msg, http.StatusInternalServerError)
 		return
 	}
 
-	queue := path.Base(req.URL.Path)
-	subscribers := handler.client.Publish(queue, string(msg)).Val()
-
 	res.Header().Set("Cache-Control", "no-cache")
-
-	if req.Header.Get("Accept") == "application/json" {
-		res.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(res).Encode(Response{"success": true, "subscribers": subscribers})
-	} else {
-		res.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(res, "OK - Subscribers: %d", subscribers)
+	res.Header().Set("Content-Type", "text/plain")
+	res.WriteHeader(http.StatusOK)
+	_, err = res.Write([]byte(result))
+	if err != nil {
+		msg := "Publish Response Failed: " + err.Error()
+		log.Print(msg)
+		return
 	}
 }
 
 func (handler *universalHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
-	if path.Dir(req.URL.Path) != handler.prefix {
-		msg := fmt.Sprint("Invalid path: ", req.URL.String())
-		log.Print(msg)
-		http.Error(res, msg, http.StatusInternalServerError)
-		return
-	}
-
 	switch req.Method {
 	case "GET":
 		handler.subscriber(res, req)
@@ -150,18 +357,28 @@ func main() {
 	var redisPass = flag.String("redis-pass", "", "redis password")
 	var redisDb = flag.Int("redis-db", -1, "redis database number")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
-	var urlPrefix = flag.String("url-prefix", "/redis", "URL prefix")
-	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable")
+	var pubsubPrefix = flag.String("pubsub-prefix", "", "pubsub URL prefix")
+	var streamPrefix = flag.String("stream-prefix", "", "stream URL prefix")
+	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable)")
 	var clientRetry = flag.Float64("client-retry", 0.0, "seconds for the client to wait before reconnecting (0 to use browser defaults)")
 
 	flag.Parse()
 
-	log.Print("Redis Address  : ", *redisAddr)
-	log.Print("Redis Password : ", *redisPass)
-	log.Print("Redis Database : ", *redisDb)
-	log.Print("Listen Address : ", *listenAddr)
-	log.Print("URL Prefix     : ", *urlPrefix)
-	log.Print("Keep-Alive     : ", *keepAlive)
+	if *pubsubPrefix == "" && *streamPrefix == "" {
+		log.Fatal("Must set pubsib-prefix or stream-prefix")
+	}
+
+	log.Print("Redis Address     : ", *redisAddr)
+	log.Print("Redis Password    : ", *redisPass)
+	log.Print("Redis Database    : ", *redisDb)
+	log.Print("Listen Address    : ", *listenAddr)
+	if *pubsubPrefix != "" {
+		log.Print("PubSub URL Prefix : ", *pubsubPrefix)
+	}
+	if *streamPrefix != "" {
+		log.Print("Stream URL Prefix : ", *streamPrefix)
+	}
+	log.Print("Keep-Alive        : ", *keepAlive)
 
 	var clientRetryTime string
 	if *clientRetry > 0.0 {
@@ -174,15 +391,15 @@ func main() {
 		Password: *redisPass,
 		DB:       *redisDb,
 	})
-	defer client.Close()
 
 	server := http.Server{
 		Addr: *listenAddr,
 		Handler: &universalHandler{
-			client,
-			*urlPrefix,
-			time.Duration(*keepAlive),
-			clientRetryTime,
+			client:          client,
+			pubsubPrefix:    *pubsubPrefix,
+			streamPrefix:    *streamPrefix,
+			keepAliveTime:   time.Duration(*keepAlive),
+			clientRetryTime: clientRetryTime,
 		},
 	}
 
