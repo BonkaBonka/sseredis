@@ -169,12 +169,7 @@ func NewStreamSender(source string, client *redis.Client) *sender {
 				payload.Values[key] = vals[0]
 			}
 
-			xar, err := client.XAdd(payload).Result()
-			if err != nil {
-				return "", err
-			}
-
-			return xar, nil
+			return client.XAdd(payload).Result()
 		},
 	}
 
