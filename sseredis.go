@@ -7,31 +7,33 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-redis/redis"
-	"github.com/gorilla/mux"
 )
 
 type Response map[string]interface{}
 
-var client *redis.Client
-var keepAliveTime time.Duration
-var clientRetryTime string
+type universalHandler struct {
+	client          *redis.Client
+	prefix          string
+	allowPosts      bool
+	keepAliveTime   time.Duration
+	clientRetryTime string
+}
 
-func subscriber(res http.ResponseWriter, req *http.Request) {
+func (handler *universalHandler) subscriber(res http.ResponseWriter, req *http.Request) {
 	flusher, ok := res.(http.Flusher)
 	if !ok {
 		http.Error(res, "Streaming Unsupported", http.StatusInternalServerError)
 		return
 	}
 
-	vars := mux.Vars(req)
-	queue := vars["queue"]
-
-	pubsub := client.Subscribe(queue)
+	queue := path.Base(req.URL.Path)
+	pubsub := handler.client.Subscribe(queue)
 	defer pubsub.Close()
 
 	channel := pubsub.Channel()
@@ -51,8 +53,8 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	if clientRetryTime != "" {
-		_, err = res.Write([]byte("retry: " + clientRetryTime + "\n\n"))
+	if handler.clientRetryTime != "" {
+		_, err = res.Write([]byte("retry: " + handler.clientRetryTime + "\n\n"))
 		if err != nil {
 			msg := "Retry-time Transmit Failed: " + err.Error()
 			log.Print(msg)
@@ -64,8 +66,8 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 		flusher.Flush()
 
 		var timeout <-chan time.Time
-		if keepAliveTime > 0 {
-			timeout = time.After(keepAliveTime * time.Second)
+		if handler.keepAliveTime > 0 {
+			timeout = time.After(handler.keepAliveTime * time.Second)
 		}
 		select {
 		case msg := <-channel:
@@ -102,10 +104,7 @@ func subscriber(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func publisher(res http.ResponseWriter, req *http.Request) {
-	vars := mux.Vars(req)
-	queue := vars["queue"]
-
+func (handler *universalHandler) publisher(res http.ResponseWriter, req *http.Request) {
 	msg, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		msg := "Message Transmit Failed: " + err.Error()
@@ -114,7 +113,8 @@ func publisher(res http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	subscribers := client.Publish(queue, string(msg)).Val()
+	queue := path.Base(req.URL.Path)
+	subscribers := handler.client.Publish(queue, string(msg)).Val()
 
 	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
@@ -128,12 +128,36 @@ func publisher(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+func (handler *universalHandler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	if path.Dir(req.URL.Path) != handler.prefix {
+		msg := fmt.Sprint("Invalid path: ", req.URL.String())
+		log.Print(msg)
+		http.Error(res, msg, http.StatusInternalServerError)
+		return
+	}
+
+	switch req.Method {
+	case "GET":
+		handler.subscriber(res, req)
+	case "POST":
+		if handler.allowPosts {
+			handler.publisher(res, req)
+			break
+		}
+		fallthrough
+	default:
+		msg := fmt.Sprint("Invalid method: ", req.Method)
+		log.Print(msg)
+		http.Error(res, msg, http.StatusMethodNotAllowed)
+	}
+}
+
 func main() {
 	var redisAddr = flag.String("redis-addr", "localhost:6379", "redis address")
 	var redisPass = flag.String("redis-pass", "", "redis password")
 	var redisDb = flag.Int("redis-db", -1, "redis database number")
-	var urlPrefix = flag.String("url-prefix", "redis", "URL prefix")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
+	var urlPrefix = flag.String("url-prefix", "/redis", "URL prefix")
 	var allowPosts = flag.Bool("allow-posts", false, "allow POSTing to the queue")
 	var keepAlive = flag.Int("keepalive", 30, "seconds between keep-alive messages (0 to disable")
 	var clientRetry = flag.Float64("client-retry", 0.0, "seconds for the client to wait before reconnecting (0 to use browser defaults)")
@@ -143,34 +167,36 @@ func main() {
 	log.Print("Redis Address  : ", *redisAddr)
 	log.Print("Redis Password : ", *redisPass)
 	log.Print("Redis Database : ", *redisDb)
-	log.Print("URL Prefix     : ", *urlPrefix)
 	log.Print("Listen Address : ", *listenAddr)
+	log.Print("URL Prefix     : ", *urlPrefix)
 	log.Print("Allow POSTs    : ", *allowPosts)
 	log.Print("Keep-Alive     : ", *keepAlive)
 
+	var clientRetryTime string
 	if *clientRetry > 0.0 {
 		log.Print("Client Retry   : ", *clientRetry)
 		clientRetryTime = strconv.Itoa(int(*clientRetry * 1000.0))
 	}
 
-	keepAliveTime = time.Duration(*keepAlive)
-
-	client = redis.NewClient(&redis.Options{
+	client := redis.NewClient(&redis.Options{
 		Addr:     *redisAddr,
 		Password: *redisPass,
 		DB:       *redisDb,
 	})
 	defer client.Close()
 
-	router := mux.NewRouter()
-	subroute := router.PathPrefix(fmt.Sprintf("/%s/", *urlPrefix)).Subrouter()
-	subroute.HandleFunc("/{queue}", subscriber).Methods("GET")
-	if *allowPosts {
-		subroute.HandleFunc("/{queue}", publisher).Methods("POST")
+	server := http.Server{
+		Addr: *listenAddr,
+		Handler: &universalHandler{
+			client,
+			*urlPrefix,
+			*allowPosts,
+			time.Duration(*keepAlive),
+			clientRetryTime,
+		},
 	}
 
-	err := http.ListenAndServe(*listenAddr, router)
-	if err != nil {
-		log.Fatal("http.ListenAndServe:", err)
-	}
+	log.Printf("Listening on %s", server.Addr)
+
+	log.Fatal(server.ListenAndServe())
 }
