@@ -37,7 +37,6 @@ func (handler *universalHandler) subscriber(res http.ResponseWriter, req *http.R
 
 	channel := pubsub.Channel()
 
-	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
 	res.Header().Set("Connection", "keep-alive")
 	res.Header().Set("Transfer-Encoding", "chunked")
@@ -115,7 +114,6 @@ func (handler *universalHandler) publisher(res http.ResponseWriter, req *http.Re
 	queue := path.Base(req.URL.Path)
 	subscribers := handler.client.Publish(queue, string(msg)).Val()
 
-	res.Header().Set("Access-Control-Allow-Origin", "*")
 	res.Header().Set("Cache-Control", "no-cache")
 
 	if req.Header.Get("Accept") == "application/json" {
