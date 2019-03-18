@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -165,8 +166,17 @@ func NewStreamSender(source string, client *redis.Client) *sender {
 
 			payload.Values = make(map[string]interface{}, len(req.PostForm))
 			for key, vals := range req.PostForm {
-				// TODO: It might be useful to bark if a key doesn't have exactly one value
-				payload.Values[key] = vals[0]
+				// Handle POST data not in key=value format
+				if len(req.PostForm) == 1 && len(vals) == 1 && vals[0] == "" {
+					if json.Valid([]byte(key)) {
+						payload.Values["json"] = key
+					} else {
+						payload.Values["body"] = key
+					}
+				} else {
+					// When multiple values, take the last one
+					payload.Values[key] = vals[len(vals)-1 : len(vals)][0]
+				}
 			}
 
 			return client.XAdd(payload).Result()
