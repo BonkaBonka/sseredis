@@ -182,7 +182,7 @@ func NewStreamSender(source string, client *redis.Client) *sender {
 					}
 					payload.Values["json"] = body
 				case "text/plain":
-					payload.Values["body"] = body
+					payload.Values["text"] = body
 				default:
 					return "", fmt.Errorf("Unknown Content-Type: %v", contentType)
 				}
