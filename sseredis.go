@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"mime"
 	"net/http"
 	"path"
 	"strconv"
@@ -161,19 +163,33 @@ func NewStreamSender(source string, client *redis.Client) *sender {
 			}
 
 			if len(req.PostForm) < 1 {
-				return "", fmt.Errorf("no POST values")
-			}
+				contentType, _, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+				if err != nil {
+					return "", err
+				}
 
-			payload.Values = make(map[string]interface{}, len(req.PostForm))
-			for key, vals := range req.PostForm {
-				// Handle POST data not in key=value format
-				if len(req.PostForm) == 1 && len(vals) == 1 && vals[0] == "" {
-					if json.Valid([]byte(key)) {
-						payload.Values["json"] = key
-					} else {
-						payload.Values["body"] = key
+				body, err := ioutil.ReadAll(req.Body)
+				if err != nil {
+					return "", err
+				}
+
+				payload.Values = make(map[string]interface{}, 1)
+
+				switch contentType {
+				case "application/json":
+					if !json.Valid(body) {
+						return "", errors.New("Invalid JSON")
 					}
-				} else {
+					payload.Values["json"] = body
+				case "text/plain":
+					payload.Values["body"] = body
+				default:
+					return "", fmt.Errorf("Unknown Content-Type: %v", contentType)
+				}
+
+			} else {
+				payload.Values = make(map[string]interface{}, len(req.PostForm))
+				for key, vals := range req.PostForm {
 					// When multiple values, take the last one
 					payload.Values[key] = vals[len(vals)-1 : len(vals)][0]
 				}
