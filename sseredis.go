@@ -108,18 +108,23 @@ func NewStreamReceiver(source string, lastId string, client *redis.Client) *rece
 	}
 
 	go func() {
+	xreader:
 		for {
 			xrr, err := client.XRead(&redis.XReadArgs{
-				Block: 0,
+				Block: time.Duration(100) * time.Millisecond,
 				Streams: []string{
 					receiver.source,
 					receiver.lastId,
 				},
 			}).Result()
 			if err != nil {
+				if err == redis.Nil {
+					continue xreader
+				}
+
 				msg := "Stream Receive Failed: " + err.Error()
 				log.Print(msg)
-				break
+				break xreader
 			}
 
 			for _, wad := range xrr {
