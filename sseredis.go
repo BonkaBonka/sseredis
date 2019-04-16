@@ -178,20 +178,20 @@ func NewStreamSender(source string, client *redis.Client) *sender {
 				switch contentType {
 				case "application/json":
 					if !json.Valid(body) {
-						return "", errors.New("Invalid JSON")
+						return "", errors.New("invalid JSON")
 					}
 					payload.Values["json"] = body
 				case "text/plain":
 					payload.Values["text"] = body
 				default:
-					return "", fmt.Errorf("Unknown Content-Type: %v", contentType)
+					return "", fmt.Errorf("unknown Content-Type: %v", contentType)
 				}
 
 			} else {
 				payload.Values = make(map[string]interface{}, len(req.PostForm))
 				for key, vals := range req.PostForm {
 					// When multiple values, take the last one
-					payload.Values[key] = vals[len(vals)-1 : len(vals)][0]
+					payload.Values[key] = vals[len(vals)-1:][0]
 				}
 			}
 
