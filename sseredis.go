@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -382,6 +383,7 @@ func main() {
 	var redisAddr = flag.String("redis-addr", "localhost:6379", "redis address")
 	var redisPass = flag.String("redis-pass", "", "redis password")
 	var redisDb = flag.Int("redis-db", -1, "redis database number")
+	var maxRedisConnections = flag.Int("max-redis-connections", 10*runtime.NumCPU(), "maximum number of redis connections in the pool")
 	var listenAddr = flag.String("listen-addr", "localhost:8080", "listen address")
 	var pubsubPrefix = flag.String("pubsub-prefix", "", "pubsub URL prefix")
 	var streamPrefix = flag.String("stream-prefix", "", "stream URL prefix")
@@ -397,6 +399,7 @@ func main() {
 	log.Print("Redis Address     : ", *redisAddr)
 	log.Print("Redis Password    : ", *redisPass)
 	log.Print("Redis Database    : ", *redisDb)
+	log.Print("Max Connections   : ", *maxRedisConnections)
 	log.Print("Listen Address    : ", *listenAddr)
 	if *pubsubPrefix != "" {
 		log.Print("PubSub URL Prefix : ", *pubsubPrefix)
@@ -416,6 +419,7 @@ func main() {
 		Addr:     *redisAddr,
 		Password: *redisPass,
 		DB:       *redisDb,
+		PoolSize: *maxRedisConnections,
 	})
 
 	server := http.Server{
